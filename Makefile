@@ -1,7 +1,9 @@
+TARGET := minimal
+
 TOOLCHAIN_PREFIX := riscv64-elf
 
 C_SRCS := \
-	./main.c
+	./$(TARGET).c
 
 S_SRCS := \
 	./startup_CH592.S
@@ -14,10 +16,10 @@ MAKEFILE_DEPS := \
 	$(foreach obj,$(OBJS),$(patsubst %.o,%.d,$(obj)))
 
 
-SECONDARY_FLASH := main.hex
-SECONDARY_LIST := main.lst
-SECONDARY_SIZE := main.siz
-SECONDARY_BIN := main.bin
+SECONDARY_FLASH := $(TARGET).hex
+SECONDARY_LIST := $(TARGET).lst
+SECONDARY_SIZE := $(TARGET).siz
+SECONDARY_BIN := $(TARGET).bin
 
 ARCH := rv32imac_zicsr
 
@@ -34,7 +36,7 @@ CFLAGS_COMMON := \
 	-fdata-sections
 
 .PHONY: all
-all: main.elf secondary-outputs
+all: $(TARGET).elf secondary-outputs
 
 .PHONY: clean
 clean:
@@ -43,23 +45,23 @@ clean:
 	-rm $(SECONDARY_FLASH)
 	-rm $(SECONDARY_LIST)
 	-rm $(SECONDARY_BIN)
-	-rm main.elf
-	-rm main.map
+	-rm $(TARGET).elf
+	-rm $(TARGET).map
 	-rm -r ./obj
 
 .PHONY: secondary-outputs
 secondary-outputs: $(SECONDARY_FLASH) $(SECONDARY_LIST) $(SECONDARY_SIZE) $(SECONDARY_BIN)
 
-main.elf: $(OBJS)
+$(TARGET).elf: $(OBJS)
 	${TOOLCHAIN_PREFIX}-gcc \
 		$(CFLAGS_COMMON) \
 		-T "linker.ld" \
 		-nostartfiles \
 		-Xlinker --gc-sections \
 		-Xlinker --print-memory-usage \
-		-Wl,-Map,"main.map" \
+		-Wl,-Map,"$(TARGET).map" \
 		-Lobj \
-		-o "main.elf" \
+		-o "$(TARGET).elf" \
 		$(OBJS)
 
 %.hex: %.elf

@@ -13,6 +13,10 @@ CH_USB_TIMEOUT     = 5000      # timeout for USB operations
 
 CH_STR_PROG_DETECT = (0x81, 0x0d, 0x01, 0x01)
 
+def wch_link_command(cmd):
+    device.write(CH_USB_EP_OUT, cmd)
+    return device.read(CH_USB_EP_IN, CH_USB_PACKET_SIZE, CH_USB_TIMEOUT)
+
 # Find the device
 device = usb.core.find(idVendor=CH_USB_VENDOR_ID, idProduct=CH_USB_PRODUCT_ID)
 
@@ -27,8 +31,10 @@ intf = cfg[(0, 0)]
 # Claim the interface
 usb.util.claim_interface(device, intf)
 
-device.write(CH_USB_EP_OUT, CH_STR_PROG_DETECT)
-print( binascii.hexlify( device.read(CH_USB_EP_IN, CH_USB_PACKET_SIZE, CH_USB_TIMEOUT) ).decode())
+prog_info = wch_link_command(CH_STR_PROG_DETECT)
+print( binascii.hexlify( prog_info ).decode())
+if prog_info[5] == 18:
+    print(f'linkE v{prog_info[3]}.{prog_info[4]} found')
 
 # Release the interface when done
 usb.util.release_interface(device, intf)

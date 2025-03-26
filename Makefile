@@ -109,4 +109,7 @@ obj/%.o: ./%.S
 flash: 
 	chprog ${SECONDARY_BIN}
 
+deepsleep: CFLAGS_COMMON += -DDEEP_SLEEP=1
+deepsleep: clean all
+
 f: clean all flash

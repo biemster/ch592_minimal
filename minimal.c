@@ -1,7 +1,10 @@
 #include <stdint.h>
 #include "CH592SFR.h"
 
-#define SLEEPTIME_MS 3000
+#define SLEEPTIME_MS 100
+#ifndef DEEP_SLEEP // 'make deepsleep' will set this to 1
+#define DEEP_SLEEP   0 // go into deep sleep instead of just waiting for SysTick (this will make the debug interface inoperable)
+#endif
 
 #define SYS_SAFE_ACCESS(a)  do { R8_SAFE_ACCESS_SIG = SAFE_ACCESS_SIG1; \
 								 R8_SAFE_ACCESS_SIG = SAFE_ACCESS_SIG2; \
@@ -9,18 +12,21 @@
 								 {a} \
 								 R8_SAFE_ACCESS_SIG = SAFE_ACCESS_SIG0; \
 								 asm volatile ("nop\nnop"); } while(0)
-#define RTC_WAIT_TICKS(t)   uint32_t rtcset = R32_RTC_CNT_32K +(t); while(R32_RTC_CNT_32K <= rtcset)
-#define RTC_MAX_COUNT       0xA8C00000
-#define RTC_FREQ            32000 // LSI
-// #define RTC_FREQ            32768 // LSE
-#define CLK_PER_US          (1.0 / ((1.0 / RTC_FREQ) * 1000 * 1000))
-#define CLK_PER_MS          (CLK_PER_US * 1000)
-#define US_TO_RTC(us)       ((uint32_t)((us) * CLK_PER_US + 0.5))
-#define MS_TO_RTC(ms)       ((uint32_t)((ms) * CLK_PER_MS + 0.5))
-#define RTC_WAIT_TICKS(t)   uint32_t rtcset = R32_RTC_CNT_32K +(t); while(R32_RTC_CNT_32K <= rtcset)
-#define SLEEP_RTC_MIN_TIME  US_TO_RTC(1000)
-#define SLEEP_RTC_MAX_TIME  (RTC_MAX_COUNT - 1000 * 1000 * 30)
-#define WAKE_UP_RTC_MAX_TIME US_TO_RTC(1600)
+#define RTC_WAIT_TICKS(t)      uint32_t rtcset = R32_RTC_CNT_32K +(t); while(R32_RTC_CNT_32K <= rtcset)
+#define RTC_MAX_COUNT          0xA8C00000
+#define RTC_FREQ               32000 // LSI
+// #define RTC_FREQ               32768 // LSE
+#define CLK_PER_US             (1.0 / ((1.0 / RTC_FREQ) * 1000 * 1000))
+#define CLK_PER_MS             (CLK_PER_US * 1000)
+#define US_TO_RTC(us)          ((uint32_t)((us) * CLK_PER_US + 0.5))
+#define MS_TO_RTC(ms)          ((uint32_t)((ms) * CLK_PER_MS + 0.5))
+#define RTC_WAIT_TICKS(t)      uint32_t rtcset = R32_RTC_CNT_32K +(t); while(R32_RTC_CNT_32K <= rtcset)
+#define SLEEP_RTC_MIN_TIME     US_TO_RTC(1000)
+#define SLEEP_RTC_MAX_TIME     (RTC_MAX_COUNT - 1000 * 1000 * 30)
+#define WAKE_UP_RTC_MAX_TIME   US_TO_RTC(1600)
+
+// For debug writing to the debug interface.
+#define DMDATA0 			   (*((PUINT32V)0xe0000380))
 
 #define GPIO_Pin_8             (0x00000100)
 #define GPIOA_ResetBits(pin)   (R32_PA_CLR |= (pin))
@@ -58,10 +64,30 @@ typedef struct
 	__IO uint32_t SCTLR;            // D10H
 } PFIC_Type;
 
-#define CORE_PERIPH_BASE (0xE0000000) /* System peripherals base address in the alias region */
-#define PFIC_BASE        (CORE_PERIPH_BASE + 0xE000)
-#define PFIC             ((PFIC_Type *) PFIC_BASE)
-#define NVIC             PFIC
+typedef struct
+{
+	__IO uint32_t CTLR;
+	__IO uint32_t SR;
+	__IO uint64_t CNT;
+	__IO uint64_t CMP;
+} SysTick_Type;
+
+#define CORE_PERIPH_BASE           (0xE0000000) /* System peripherals base address in the alias region */
+#define PFIC_BASE                  (CORE_PERIPH_BASE + 0xE000)
+#define PFIC                       ((PFIC_Type *) PFIC_BASE)
+#define NVIC                       PFIC
+
+#define SysTick_BASE               (CORE_PERIPH_BASE + 0xF000)
+#define SysTick                    ((SysTick_Type *) SysTick_BASE)
+#define SysTick_LOAD_RELOAD_Msk    (0xFFFFFFFFFFFFFFFF)
+#define SysTick_CTLR_SWIE          (1 << 31)
+#define SysTick_CTLR_INIT          (1 << 5)
+#define SysTick_CTLR_MODE          (1 << 4)
+#define SysTick_CTLR_STRE          (1 << 3)
+#define SysTick_CTLR_STCLK         (1 << 2)
+#define SysTick_CTLR_STIE          (1 << 1)
+#define SysTick_CTLR_STE           (1 << 0)
+#define SysTick_SR_CNTIF           (1 << 0)
 
 void NVIC_EnableIRQ(IRQn_Type IRQn)
 {
@@ -201,12 +227,47 @@ void LowPower(uint32_t time) {
 	RTCInit();
 }
 
+void systick_delay_ms(int ms) {
+	uint64_t targend = SysTick->CNT + (ms * 60 * 1000); // 60MHz clock
+	while( ((int64_t)( SysTick->CNT - targend )) < 0 );
+}
+
+void DelayMs(int ms, int deepsleep) {
+#if DEEP_SLEEP
+	if(deepsleep) {
+		LowPower(MS_TO_RTC(ms));
+		DCDCEnable(); // Sleep disables DCDC
+	}
+	else {
+		LowPowerIdle(MS_TO_RTC(ms));
+	}
+#else
+	systick_delay_ms(ms);
+#endif
+}
+
 void blink(int n) {
 	for(int i = n-1; i >= 0; i--) {
 		GPIOA_ResetBits(GPIO_Pin_8);
-		LowPowerIdle(MS_TO_RTC(33));
+		DelayMs(33, /*deepsleep*/FALSE);
 		GPIOA_SetBits(GPIO_Pin_8);
-		if(i) LowPowerIdle(MS_TO_RTC(33));
+		if(i) DelayMs(33, /*deepsleep*/FALSE);
+	}
+}
+
+void char_debug(char c) {
+	// this while is wasting clock ticks, but the easiest way to demo the debug interface
+	while(DMDATA0 & 0xc0);
+	DMDATA0 = 0x85 | (c << 8);
+}
+
+void print(char msg[], int size, int endl) {
+	for(int i = 0; i < size; i++) {
+		char_debug(msg[i]);
+	}
+	if(endl) {
+		char_debug('\r');
+		char_debug('\n');
 	}
 }
 
@@ -217,14 +278,17 @@ int main(void) {
 	GPIOA_ModeCfg_Out(GPIO_Pin_8);
 	GPIOA_SetBits(GPIO_Pin_8);
 	LSIEnable();
+	SysTick->CTLR = 5; // enable SysTick on HCLK
+#if DEEP_SLEEP
 	RTCInit();
 	SleepInit();
+#endif
 
 	blink(5);
 
 	while(1) {
-		LowPower(MS_TO_RTC(SLEEPTIME_MS -33));
-		DCDCEnable(); // Sleep disables DCDC
-		blink(1);
+		DelayMs(SLEEPTIME_MS -33, /*deepsleep=*/TRUE);
+		blink(1); // 33 ms
+		print("No More EVT!", sizeof("No More EVT!"), /*endl=*/TRUE);
 	}
 }

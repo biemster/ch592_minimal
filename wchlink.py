@@ -54,6 +54,8 @@ def main():
         open_terminal()
     elif args.reset:
         reset()
+        if args.terminal:
+            open_terminal()
     else:
         flash()
         reset()

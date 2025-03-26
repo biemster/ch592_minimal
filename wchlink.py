@@ -180,6 +180,7 @@ def flash(fw = None):
     assert wch_link_command((0x81, 0x02, 0x01, 0x08)) == [0x82, 0x02, 0x01, 0x08] # what's this?
 
 def dump(address, length):
+    address = int(address, 16)
     if not length:
         length = 4
     elif length[:2] == '0x':
@@ -187,13 +188,14 @@ def dump(address, length):
     else:
         length = int(length)
     length += (4 - (length % 4)) if length % 4 else 0
+    address -= address % 4
 
-    cmd = [0x81, 0x03, 0x08] + list(int(address, 16).to_bytes(4)) + list(length.to_bytes(4))
+    cmd = [0x81, 0x03, 0x08] + list(address.to_bytes(4)) + list(length.to_bytes(4))
     wch_link_command(cmd)
     assert wch_link_command((0x81, 0x02, 0x01, 0x0c)) == [0x82, 0x02, 0x01, 0x0c] # what's this?
     res = array('I', bytes( device.read(CH_USB_EP_IN_DATA, CH_USB_PACKET_SIZE, CH_USB_TIMEOUT) ))
     res.byteswap()
-    print(f'{address}: {[hex(x) for x in res.tobytes()]}')
+    print(f'{address:08x}: {[hex(x) for x in res.tobytes()]}')
 
 def open_terminal():
     assert wch_link_command((0x81, 0x08, 0x06, 0x10, 0x80, 0x00, 0x00, 0x01, 0x02)) == [0x82, 0x08, 0x06, 0x10, 0x80, 0x00, 0x00, 0x01, 0x00]

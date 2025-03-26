@@ -195,7 +195,7 @@ def dump(address, length):
     assert wch_link_command((0x81, 0x02, 0x01, 0x0c)) == [0x82, 0x02, 0x01, 0x0c] # what's this?
     res = array('I', bytes( device.read(CH_USB_EP_IN_DATA, CH_USB_PACKET_SIZE, CH_USB_TIMEOUT) ))
     res.byteswap()
-    print(f'{address:08x}: {[hex(x) for x in res.tobytes()]}')
+    print(f'{address:08x}: {[hex(x) for x in res.tobytes()]}'.replace("'",""))
 
 def open_terminal():
     assert wch_link_command((0x81, 0x08, 0x06, 0x10, 0x80, 0x00, 0x00, 0x01, 0x02)) == [0x82, 0x08, 0x06, 0x10, 0x80, 0x00, 0x00, 0x01, 0x00]

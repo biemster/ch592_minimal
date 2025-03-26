@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import sys
 import argparse
+from array import array
 
 import usb.core
 import usb.util
@@ -10,6 +11,7 @@ CH_USB_PRODUCT_ID  = 0x8010    # PID
 CH_USB_EP_OUT      = 0x01      # endpoint for command transfer out
 CH_USB_EP_OUT_DATA = 0x02      # endpoint for data transfer out
 CH_USB_EP_IN       = 0x81      # endpoint for reply transfer in
+CH_USB_EP_IN_DATA  = 0x82      # endpoint for data reply transfer in
 CH_USB_PACKET_SIZE = 256       # packet size
 CH_USB_TIMEOUT     = 5000      # timeout for USB operations
 
@@ -27,6 +29,8 @@ device = usb.core.find(idVendor=CH_USB_VENDOR_ID, idProduct=CH_USB_PRODUCT_ID)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--flash', help='Flash .bin file. If no file is provided a blinky will be flashed')
+    parser.add_argument('--dump', help='Dump memory region, use with --length to batch n bytes')
+    parser.add_argument('--length', help='Number of bytes to dump')
     parser.add_argument('--terminal', help='Open debug interface terminal', action='store_true')
     parser.add_argument('--reset', help='Reset', action='store_true')
     args = parser.parse_args()
@@ -56,6 +60,8 @@ def main():
         reset()
         if args.terminal:
             open_terminal()
+    elif args.dump:
+        dump(args.dump, args.length)
     else:
         flash()
         reset()
@@ -172,6 +178,22 @@ def flash(fw = None):
     wch_link_send_data(fw_bin)
 
     assert wch_link_command((0x81, 0x02, 0x01, 0x08)) == [0x82, 0x02, 0x01, 0x08] # what's this?
+
+def dump(address, length):
+    if not length:
+        length = 4
+    elif length[:2] == '0x':
+        length = int(length, 16)
+    else:
+        length = int(length)
+    length += (4 - (length % 4)) if length % 4 else 0
+
+    cmd = [0x81, 0x03, 0x08] + list(int(address, 16).to_bytes(4)) + list(length.to_bytes(4))
+    wch_link_command(cmd)
+    assert wch_link_command((0x81, 0x02, 0x01, 0x0c)) == [0x82, 0x02, 0x01, 0x0c] # what's this?
+    res = array('I', bytes( device.read(CH_USB_EP_IN_DATA, CH_USB_PACKET_SIZE, CH_USB_TIMEOUT) ))
+    res.byteswap()
+    print(f'{address}: {[hex(x) for x in res.tobytes()]}')
 
 def open_terminal():
     assert wch_link_command((0x81, 0x08, 0x06, 0x10, 0x80, 0x00, 0x00, 0x01, 0x02)) == [0x82, 0x08, 0x06, 0x10, 0x80, 0x00, 0x00, 0x01, 0x00]

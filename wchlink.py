@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import sys
+import argparse
 from time import sleep
 
 import usb.core
@@ -18,6 +19,47 @@ CH_STR_PROG_SPEED  = (0x81, 0x0c, 0x02, 0x01, 0x02) # (0x01: 6000kHz, 0x02: 4000
 CH_STR_CHIP_DETECT = (0x81, 0x0d, 0x01, 0x02)
 CH_STR_CHIP_SPEED  = (0x81, 0x0c, 0x02, 0x0b, 0x02) # 0x0b: CH59x
 CH_STR_FLASH_PREP  = (0x81, 0x01, 0x08, 0x00, 0x00, 0x00, 0x00) # send to addr 0x00000000
+
+device = usb.core.find(idVendor=CH_USB_VENDOR_ID, idProduct=CH_USB_PRODUCT_ID)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--flash', help='Flash .bin file')
+    parser.add_argument('--terminal', help='Open debug interface terminal', action='store_true')
+    parser.add_argument('--reset', help='Reset', action='store_true')
+    args = parser.parse_args()
+
+    if device is None:
+        print("no programmer found")
+        exit(0)
+
+    # Get an endpoint instance
+    cfg = device.get_active_configuration()
+    intf = cfg[(0, 0)]
+
+    # Claim the interface
+    usb.util.claim_interface(device, intf)
+
+    prog_init()
+    chip_init()
+
+    if args.flash:
+        flash(args.flash)
+        reset()
+        if args.terminal:
+            open_terminal()
+    elif args.terminal:
+        open_terminal()
+    elif args.reset:
+        reset()
+    else:
+        flash()
+        reset()
+
+    # Release the interface when done
+    usb.util.release_interface(device, intf)
+    print('done')
+
 
 flashloader = bytes.fromhex(
         '797122d44ad056ca06d626d24ece52cc5ac85ec662c4937715002a84ae8a3289'
@@ -61,13 +103,7 @@ flashloader = bytes.fromhex(
         '398d2380a700e39634ff6dbba1476392f9046d398144630d0b008d479304c003'
         '6308fb009304000563048b01930440041375c507e30895d81945013939390545'
         '293126850d3909453d314931e31c05d669bb91476399f90013056006fd36f53e'
-        '130590090db7e38f09d4f154a9bbffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+        '130590090db7e38f09d4f154a9bb'
         )
 
 blink_bin = bytes.fromhex(
@@ -89,58 +125,58 @@ blink_bin = bytes.fromhex(
         '010001008346070093e606082300d70023800700010001008280411122c426c2'
         '06c6a537b71700409387470b9843b7140040371400401377f7ef98c3b7170040'
         '9387070a98439384c40a1304840a1367071098c39c4037c503001305c56c93e7'
-        '07109cc0b1351c40375522001305055193e707101cc02d3df1bf0000ffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+        '07109cc0b1351c40375522001305055193e707101cc02d3df1bf0000'
     )
 
 def wch_link_command(cmd):
     device.write(CH_USB_EP_OUT, cmd)
     return list( device.read(CH_USB_EP_IN, CH_USB_PACKET_SIZE, CH_USB_TIMEOUT) )
 
-# Find the device
-device = usb.core.find(idVendor=CH_USB_VENDOR_ID, idProduct=CH_USB_PRODUCT_ID)
+def wch_link_send_data(data):
+    padding_len = CH_USB_PACKET_SIZE - (len(data) % CH_USB_PACKET_SIZE)
+    data += bytes([0xff] * padding_len)
+    for b in range(0, len(data), CH_USB_PACKET_SIZE):
+        device.write(CH_USB_EP_OUT_DATA, data[b:b +CH_USB_PACKET_SIZE])
 
-if device is None:
-    print("no programmer found")
-    exit(0)
-
-# Get an endpoint instance
-cfg = device.get_active_configuration()
-intf = cfg[(0, 0)]
-
-# Claim the interface
-usb.util.claim_interface(device, intf)
-
-prog_info = wch_link_command(CH_STR_PROG_DETECT)
-print( [hex(x) for x in prog_info] )
-if prog_info[5] == 18:
-    print(f'linkE v{prog_info[3]}.{prog_info[4]} found')
+def prog_init():
+    prog_info = wch_link_command(CH_STR_PROG_DETECT)
+    # print( [hex(x) for x in prog_info] )
+    if prog_info[5] == 18:
+        print(f'* linkE v{prog_info[3]}.{prog_info[4]} found')
     assert wch_link_command(CH_STR_PROG_SPEED) == [0x82, 0x0c, 0x01, 0x01]
 
+def chip_init():
     assert wch_link_command(CH_STR_CHIP_DETECT)[3] == 0x0b
+    print('* ch59x found, set speed to 4000kHz')
     assert wch_link_command(CH_STR_CHIP_SPEED) == [0x82, 0x0c, 0x01, 0x01]
 
-    fw_len = 604 # len(blink_bin)
-    assert wch_link_command(CH_STR_FLASH_PREP + tuple(fw_len.to_bytes(4))) == [0x82, 0x01, 0x01, 0x01]
+def flash(fw = None):
+    fw_bin = blink_bin
+    if fw:
+        fw_bin = open(fw, 'rb').read()
+        print(f'* flashing {fw} (len={len(fw_bin)})')
+    else:
+        print('* flashing blinky example')
+    assert wch_link_command(CH_STR_FLASH_PREP + tuple(len(fw_bin).to_bytes(4))) == [0x82, 0x01, 0x01, 0x01]
 
     assert wch_link_command((0x81, 0x02, 0x01, 0x05)) == [0x82, 0x02, 0x01, 0x05] # what's this?
 
-    for b in range(0, len(flashloader), CH_USB_PACKET_SIZE):
-        device.write(CH_USB_EP_OUT_DATA, flashloader[b:b +CH_USB_PACKET_SIZE])
+    wch_link_send_data(flashloader)
 
     assert wch_link_command((0x81, 0x02, 0x01, 0x07)) == [0x82, 0x02, 0x01, 0x07] # what's this?
     assert wch_link_command((0x81, 0x02, 0x01, 0x02)) == [0x82, 0x02, 0x01, 0x02] # what's this?
 
-    for b in range(0, len(blink_bin), CH_USB_PACKET_SIZE):
-        device.write(CH_USB_EP_OUT_DATA, blink_bin[b:b +CH_USB_PACKET_SIZE])
+    wch_link_send_data(fw_bin)
 
     assert wch_link_command((0x81, 0x02, 0x01, 0x08)) == [0x82, 0x02, 0x01, 0x08] # what's this?
-    assert wch_link_command((0x81, 0x0b, 0x01, 0x01)) == [0x82, 0x0b, 0x01, 0x01] # what's this?
-    assert wch_link_command((0x81, 0x0d, 0x01, 0xff)) == [0x82, 0x0d, 0x01, 0xff] # what's this?
 
-# Release the interface when done
-usb.util.release_interface(device, intf)
+def open_terminal():
+    return None
+
+def reset():
+    assert wch_link_command((0x81, 0x0b, 0x01, 0x01)) == [0x82, 0x0b, 0x01, 0x01]
+    assert wch_link_command((0x81, 0x0d, 0x01, 0xff)) == [0x82, 0x0d, 0x01, 0xff]
+
+
+if __name__ == '__main__':
+    main()

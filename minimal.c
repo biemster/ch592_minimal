@@ -1,10 +1,12 @@
 #include <stdint.h>
 #include "CH592SFR.h"
 
-#define SLEEPTIME_MS 100
+#define SLEEPTIME_MS 300
 #ifndef DEEP_SLEEP // 'make deepsleep' will set this to 1
 #define DEEP_SLEEP   0 // go into deep sleep instead of just waiting for SysTick (this will make the debug interface inoperable)
 #endif
+
+#define __HIGH_CODE __attribute__((section(".highcode")))
 
 #define SYS_SAFE_ACCESS(a)  do { R8_SAFE_ACCESS_SIG = SAFE_ACCESS_SIG1; \
 								 R8_SAFE_ACCESS_SIG = SAFE_ACCESS_SIG2; \
@@ -32,6 +34,49 @@
 #define GPIOA_ResetBits(pin)   (R32_PA_CLR |= (pin))
 #define GPIOA_SetBits(pin)     (R32_PA_OUT |= (pin))
 #define GPIOA_ModeCfg_Out(pin) R32_PA_PD_DRV &= ~(pin); R32_PA_DIR |= (pin)
+
+#define EEPROM_PAGE_SIZE    256                       // Flash-ROM & Data-Flash page size for writing
+#define EEPROM_BLOCK_SIZE   4096                      // Flash-ROM & Data-Flash block size for erasing
+#define EEPROM_MIN_ER_SIZE  EEPROM_PAGE_SIZE          // Data-Flash minimal size for erasing
+//#define EEPROM_MIN_ER_SIZE  EEPROM_BLOCK_SIZE         // Flash-ROM  minimal size for erasing
+#define EEPROM_MIN_WR_SIZE  1                         // Data-Flash minimal size for writing
+#define EEPROM_MAX_SIZE     0x8000                    // Data-Flash maximum size, 32KB
+#define FLASH_MIN_WR_SIZE   4                         // Flash-ROM minimal size for writing
+#define FLASH_ROM_MAX_SIZE  0x070000                  // Flash-ROM maximum program size, 448KB
+
+#define CMD_FLASH_ROM_START_IO	0x00		// start FlashROM I/O, without parameter
+#define CMD_FLASH_ROM_SW_RESET	0x04		// software reset FlashROM, without parameter
+#define CMD_GET_ROM_INFO		0x06		// get information from FlashROM, parameter @Address,Buffer
+#define CMD_GET_UNIQUE_ID		0x07		// get 64 bit unique ID, parameter @Buffer
+#define CMD_FLASH_ROM_PWR_DOWN	0x0D		// power-down FlashROM, without parameter
+#define CMD_FLASH_ROM_PWR_UP	0x0C		// power-up FlashROM, without parameter
+#define CMD_FLASH_ROM_LOCK		0x08		// lock(protect)/unlock FlashROM data block, return 0 if success, parameter @StartAddr
+// StartAddr: 0=unlock all, 1=lock boot code, 3=lock all code and data
+
+#define CMD_EEPROM_ERASE		0x09		// erase Data-Flash block, return 0 if success, parameter @StartAddr,Length
+#define CMD_EEPROM_WRITE		0x0A		// write Data-Flash data block, return 0 if success, parameter @StartAddr,Buffer,Length
+#define CMD_EEPROM_READ			0x0B		// read Data-Flash data block, parameter @StartAddr,Buffer,Length
+#define CMD_FLASH_ROM_ERASE		0x01		// erase FlashROM block, return 0 if success, parameter @StartAddr,Length
+#define CMD_FLASH_ROM_WRITE		0x02		// write FlashROM data block, minimal block is dword, return 0 if success, parameter @StartAddr,Buffer,Length
+#define CMD_FLASH_ROM_VERIFY	0x03		// read FlashROM data block, minimal block is dword, return 0 if success, parameter @StartAddr,Buffer,Length
+
+#define ROM_CFG_MAC_ADDR	0x7F018			// address for MAC address information
+#define ROM_CFG_BOOT_INFO	0x7DFF8			// address for BOOT information
+
+#define flash_rom_start_io( )                       flash_eeprom_cmd( CMD_FLASH_ROM_START_IO, 0, 0, 0 )
+#define flash_rom_sw_reset( )                       flash_eeprom_cmd( CMD_FLASH_ROM_SW_RESET, 0, 0, 0 )
+#define get_mac_address(Buffer)                     flash_eeprom_cmd( CMD_GET_ROM_INFO, ROM_CFG_MAC_ADDR, Buffer, 0 )
+#define get_boot_info(Buffer)                       flash_eeprom_cmd( CMD_GET_ROM_INFO, ROM_CFG_BOOT_INFO, Buffer, 0 )
+#define get_unique_id(Buffer)                       flash_eeprom_cmd( CMD_GET_UNIQUE_ID, 0, Buffer, 0 )
+#define flash_rom_pwr_down( )                       flash_eeprom_cmd( CMD_FLASH_ROM_PWR_DOWN, 0, 0, 0 )
+#define flash_rom_pwr_up( )                         flash_eeprom_cmd( CMD_FLASH_ROM_PWR_UP, 0, 0, 0 )
+#define eeprom_read(StartAddr,Buffer,Length)        flash_eeprom_cmd( CMD_EEPROM_READ, StartAddr, Buffer, Length )
+#define eeprom_erase(StartAddr,Length)              flash_eeprom_cmd( CMD_EEPROM_ERASE, StartAddr, 0, Length )
+#define eeprom_write(StartAddr,Buffer,Length)       flash_eeprom_cmd( CMD_EEPROM_WRITE, StartAddr, Buffer, Length )
+#define flash_rom_erase(StartAddr,Length)           flash_eeprom_cmd( CMD_FLASH_ROM_ERASE, StartAddr, 0, Length )
+#define flash_rom_write(StartAddr,Buffer,Length)    flash_eeprom_cmd( CMD_FLASH_ROM_WRITE, StartAddr, Buffer, Length )
+#define flash_rom_verify(StartAddr,Buffer,Length)   flash_eeprom_cmd( CMD_FLASH_ROM_VERIFY, StartAddr, Buffer, Length )
+#define flash_rom_read(StartAddr,Buffer,Length)     do { int k,l = (Length +3)>>2; for(k=0; k<l; k++) ((uint32_t*)(Buffer))[k] = ((uint32_t*)(StartAddr))[k]; } while(0)
 
 #define __I  volatile const  /*!< defines 'read only' permissions     */
 #define __O  volatile        /*!< defines 'write only' permissions     */
@@ -246,6 +291,128 @@ void DelayMs(int ms, int deepsleep) {
 #endif
 }
 
+__HIGH_CODE
+void flash_rom_beg(uint8_t beg) {
+	R8_FLASH_CTRL = 0;
+	R8_FLASH_CTRL = 0x5;
+	asm volatile ("nop\nnop");
+	R8_FLASH_DATA = beg;
+}
+
+__HIGH_CODE
+void flash_rom_beg_ff(uint8_t beg) {
+	R8_FLASH_CTRL = 0;
+	R8_FLASH_CTRL = 0x5;
+	asm volatile ("nop\nnop");
+	R8_FLASH_DATA = beg;
+	while((char)R8_FLASH_CTRL < 0);
+	R8_FLASH_DATA = beg;
+	while((char)R8_FLASH_CTRL < 0);
+}
+
+__HIGH_CODE
+void flash_rom_end() {
+	while((char)R8_FLASH_CTRL < 0);
+	R8_FLASH_CTRL = 0;
+}
+
+__HIGH_CODE
+void flash_start() {
+	SYS_SAFE_ACCESS(
+		R32_GLOBAL_CONFIG |= 0xe0; // 0xe0 for writing, otherwise 0x20
+	);
+
+	R8_FLASH_CTRL = 0x4;
+	flash_rom_beg_ff(0xff);
+	flash_rom_end();
+}
+
+__HIGH_CODE
+void flash_rom_out(uint8_t val) {
+	while((char)R8_FLASH_CTRL < 0);
+	R8_FLASH_DATA = val;
+}
+
+__HIGH_CODE
+uint8_t flash_rom_in() {
+	while((char)R8_FLASH_CTRL < 0);
+	return R8_FLASH_DATA;
+}
+
+__HIGH_CODE
+void flash_rom_addr(uint8_t beg, uint32_t addr) {
+	uint8_t repeat = 5;
+	if((beg & 0xbf) != 0xb) {
+		flash_rom_beg(0x6);
+		flash_rom_end();
+		repeat = 3;
+	}
+	flash_rom_beg(beg);
+	for(int i = 0; i < repeat; i++) {
+		flash_rom_out((uint8_t)(addr >> 0x10));
+		addr <<= 8;
+	}
+}
+
+__HIGH_CODE
+uint8_t flash_rom_wait() {
+	uint8_t b;
+	flash_rom_end();
+	for(int i = 0; i < 0x80000; i++) {
+		flash_rom_beg(0x5);
+		flash_rom_in();
+		b = flash_rom_in();
+		flash_rom_end();
+		if((b & 1) == 0) {
+			return b | 1;
+		}
+	}
+	return 0;
+}
+
+__HIGH_CODE
+void flash_eeprom_cmd( uint8_t cmd, uint32_t StartAddr, void *Buffer, uint32_t Length ) {
+	uint8_t b = 0;
+	uint32_t isr0 = NVIC->ISR[0];
+	uint32_t isr1 = NVIC->ISR[1];
+	NVIC->IRER[0] = 0xffffffff;
+	NVIC->IRER[1] = 0xffffffff;
+
+	switch(cmd) {
+	case CMD_FLASH_ROM_SW_RESET:
+		flash_start();
+		flash_rom_beg(0x66);
+		flash_rom_end();
+		flash_rom_beg(0x99);
+		flash_rom_end();
+		break;
+	case CMD_FLASH_ROM_WRITE:
+		flash_start();
+		do {
+			Length >>= 2; // divide by 4, to write words instead of bytes
+			flash_rom_addr(0x2, StartAddr);
+			for(int i = 0; i < Length; i++) {
+				R32_FLASH_DATA = ((uint32_t*)Buffer)[i];
+				for(int j = 0; j < 4; j++) {
+					while((char)R8_FLASH_CTRL < 0);
+					R8_FLASH_CTRL = 0x15;
+				}
+			}
+			b = flash_rom_wait();
+		} while(!b);
+		break;
+	default:
+		break;
+	}
+
+	SYS_SAFE_ACCESS(
+		R32_GLOBAL_CONFIG &= 0x10;
+	);
+
+	NVIC->IENR[0] = isr0;
+	NVIC->IENR[1] = isr1;
+}
+
 void blink(int n) {
 	for(int i = n-1; i >= 0; i--) {
 		GPIOA_ResetBits(GPIO_Pin_8);
@@ -271,6 +438,17 @@ void print(char msg[], int size, int endl) {
 	}
 }
 
+void print_bytes(uint8_t data[], int size) {
+	char hex_digits[] = "0123456789abcdef";
+	char hx[] = "0x00 ";
+	for(int i = 0; i < size; i++) {
+		hx[2] = hex_digits[(data[i] >> 4) & 0x0F];
+		hx[3] = hex_digits[data[i] & 0x0F];
+		print(hx, 5, /*endl*/FALSE);
+	}
+	print(0, 0, /*endl*/TRUE);
+}
+
 
 int main(void) {
 	Clock60MHz();
@@ -283,12 +461,25 @@ int main(void) {
 	RTCInit();
 	SleepInit();
 #endif
+	uint8_t TestBuf[1024];
 
 	blink(5);
+
+#if !DEEP_SLEEP
+	flash_rom_read(0x6ac, TestBuf, 4);
+	char temp0 = TestBuf[0];
+	TestBuf[0] = TestBuf[1];
+	TestBuf[1] = TestBuf[2];
+	TestBuf[2] = TestBuf[3];
+	TestBuf[3] = temp0;
+	flash_rom_write(0x6ac, TestBuf, 4);
+#endif
 
 	while(1) {
 		DelayMs(SLEEPTIME_MS -33, /*deepsleep=*/TRUE);
 		blink(1); // 33 ms
+#if !DEEP_SLEEP
 		print("No More EVT!", sizeof("No More EVT!"), /*endl=*/TRUE);
+#endif
 	}
 }

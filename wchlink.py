@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import sys
+from time import sleep
 import argparse
 from array import array
 
@@ -32,6 +33,8 @@ def main():
     parser.add_argument('--dump', help='Dump memory region, use with --length to batch n bytes')
     parser.add_argument('--length', help='Number of bytes to dump')
     parser.add_argument('--terminal', help='Open debug interface terminal', action='store_true')
+    parser.add_argument('--toggle-3v', help='Toggle the 3v3 line, to turn the chip off and on again', action='store_true')
+    parser.add_argument('--toggle-5v', help='Toggle the 5v line, to turn the chip off and on again', action='store_true')
     parser.add_argument('--reset', help='Reset', action='store_true')
     args = parser.parse_args()
 
@@ -47,6 +50,10 @@ def main():
     usb.util.claim_interface(device, intf)
 
     prog_init()
+
+    if args.toggle_3v or args.toggle_5v:
+        toggle_power(args.toggle_3v, args.toggle_5v)
+
     chip_init()
 
     if args.flash:
@@ -54,15 +61,15 @@ def main():
         reset()
         if args.terminal:
             open_terminal()
-    elif args.terminal:
-        open_terminal()
     elif args.reset:
         reset()
         if args.terminal:
             open_terminal()
+    elif args.terminal:
+        open_terminal()
     elif args.dump:
         dump(args.dump, args.length)
-    else:
+    elif not (args.toggle_3v or args.toggle_5v):
         flash()
         reset()
 
@@ -146,6 +153,16 @@ def wch_link_send_data(data):
     data += bytes([0xff] * padding_len)
     for b in range(0, len(data), CH_USB_PACKET_SIZE):
         device.write(CH_USB_EP_OUT_DATA, data[b:b +CH_USB_PACKET_SIZE])
+
+def toggle_power(do_3v, do_5v):
+    if do_3v:
+        assert wch_link_command((0x81, 0x0d, 0x01, 0x0a)) == [0x82, 0x0d, 0x01, 0x0a]
+        sleep(0.1)
+        assert wch_link_command((0x81, 0x0d, 0x01, 0x09)) == [0x82, 0x0d, 0x01, 0x09]
+    if do_5v:
+        assert wch_link_command((0x81, 0x0d, 0x01, 0x0c)) == [0x82, 0x0d, 0x01, 0x0c]
+        sleep(0.1)
+        assert wch_link_command((0x81, 0x0d, 0x01, 0x0b)) == [0x82, 0x0d, 0x01, 0x0b]
 
 def prog_init():
     prog_info = wch_link_command(CH_STR_PROG_DETECT)

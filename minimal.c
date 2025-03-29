@@ -297,17 +297,11 @@ void flash_rom_beg(uint8_t beg) {
 	R8_FLASH_CTRL = 0x5;
 	asm volatile ("nop\nnop");
 	R8_FLASH_DATA = beg;
-}
-
-__HIGH_CODE
-void flash_rom_beg_ff(uint8_t beg) {
-	R8_FLASH_CTRL = 0;
-	R8_FLASH_CTRL = 0x5;
-	asm volatile ("nop\nnop");
-	R8_FLASH_DATA = beg;
-	while((char)R8_FLASH_CTRL < 0);
-	R8_FLASH_DATA = beg;
-	while((char)R8_FLASH_CTRL < 0);
+	if(beg == 0xff) {
+		while((char)R8_FLASH_CTRL < 0);
+		R8_FLASH_DATA = beg;
+		while((char)R8_FLASH_CTRL < 0);
+	}
 }
 
 __HIGH_CODE
@@ -323,7 +317,7 @@ void flash_start() {
 	);
 
 	R8_FLASH_CTRL = 0x4;
-	flash_rom_beg_ff(0xff);
+	flash_rom_beg(0xff);
 	flash_rom_end();
 }
 
@@ -466,20 +460,18 @@ int main(void) {
 	blink(5);
 
 #if !DEEP_SLEEP
-	flash_rom_read(0x6ac, TestBuf, 4);
+	flash_rom_read(0x69c, TestBuf, 4);
 	char temp0 = TestBuf[0];
 	TestBuf[0] = TestBuf[1];
 	TestBuf[1] = TestBuf[2];
 	TestBuf[2] = TestBuf[3];
 	TestBuf[3] = temp0;
-	flash_rom_write(0x6ac, TestBuf, 4);
+	flash_rom_write(0x69c, TestBuf, 4);
+	print("No More EVT!", sizeof("No More EVT!"), /*endl=*/TRUE);
 #endif
 
 	while(1) {
 		DelayMs(SLEEPTIME_MS -33, /*deepsleep=*/TRUE);
 		blink(1); // 33 ms
-#if !DEEP_SLEEP
-		print("No More EVT!", sizeof("No More EVT!"), /*endl=*/TRUE);
-#endif
 	}
 }

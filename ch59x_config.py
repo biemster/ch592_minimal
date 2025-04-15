@@ -48,7 +48,7 @@ device.write(CH_USB_EP_OUT, CH_STR_CONFIG_READ)
 print(device.read(CH_USB_EP_IN, CH_USB_PACKET_SIZE, CH_USB_TIMEOUT))
 
 # Write good config, like the WeAct modules came with
-device.write(CH_USB_EP_OUT, CH_STR_CONFIG_WRITE + bytes([255, 255, 255, 255, 255, 255, 255, 255, 213 if DEBUG_ENABLE else 77, 15, 255, 79]))
+device.write(CH_USB_EP_OUT, bytes(CH_STR_CONFIG_WRITE) + bytes([255, 255, 255, 255, 255, 255, 255, 255, 213 if DEBUG_ENABLE else 77, 15, 255, 79]))
 print(device.read(CH_USB_EP_IN, CH_USB_PACKET_SIZE, CH_USB_TIMEOUT))
 
 # Reboot definitely seems necessary after config update
